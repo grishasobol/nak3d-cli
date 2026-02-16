@@ -1,0 +1,18 @@
+[package]
+name = "nak3d-cli"
+version = "0.1.0"
+edition = "2024"
+
+[dependencies]
+anyhow = { version = "1.0.86" }
+clap = { version = "4.5.8", features = ["derive"] }
+directories = "5.0.1"
+serde = { version = "^1", default-features = false, features = ["derive"] }
+serde_json = { version = "1.0.135", default-features = false, features = [
+    "alloc",
+] }
+alloy = "1.4"
+tokio = { version = "1.38.0", features = ["rt-multi-thread"] }
+
+ethexe-ethereum = { git = "https://github.com/gear-tech/gear", package = "ethexe-ethereum" }
+gsigner = { git = "https://github.com/gear-tech/gear", package = "gsigner" }
