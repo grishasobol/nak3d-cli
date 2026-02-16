@@ -4,7 +4,12 @@ use clap::{Args, Parser, Subcommand};
 use directories::ProjectDirs;
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
 use std::{
-    collections::BTreeMap, fs, path::{Path, PathBuf}, str::FromStr, thread, time::{Duration, SystemTime, UNIX_EPOCH}
+    collections::BTreeMap,
+    fs,
+    path::{Path, PathBuf},
+    str::FromStr,
+    thread,
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 const APP_QUALIFIER: &str = "com";
@@ -27,8 +32,10 @@ enum Command {
     /// Show current app state from local DB.
     ShowState,
 
-    // TODO:
+    UploadCode(UploadCodeArgs),
+    CreateNewContract(CreateNewContractArgs),
 
+    // TODO:
     /// Query profiles from the contract via RPC (stub).
     GetProfiles(GetProfilesArgs),
     /// Upload hidden content (stub) and save local ContentId -> PreProof mapping.
@@ -37,6 +44,19 @@ enum Command {
     RunModelClient(RunModelClientArgs),
     /// Buy hidden content from a model and save purchase status.
     BuyHiddenContent(BuyHiddenContentArgs),
+}
+
+#[derive(Debug, Args)]
+struct UploadCodeArgs {
+    /// Path to the Wasm file containing the model code.
+    #[arg(value_name = "WASM_PATH")]
+    wasm_path: PathBuf,
+}
+
+#[derive(Debug, Args)]
+struct CreateNewContractArgs {
+    #[arg(value_name = "CodeId")]
+    code_id: String,
 }
 
 #[derive(Debug, Args)]
@@ -59,6 +79,8 @@ struct SetArgs {
 
 #[derive(Debug, Subcommand)]
 enum SetCommand {
+    /// Set router address used by other commands.
+    RouterAddress { address: String },
     /// Set contract address used by other commands.
     ContractAddress { address: String },
     /// Set RPC URL used by other commands.
@@ -103,6 +125,7 @@ struct AppState {
     current_user_address: Option<String>,
     contract_address: Option<String>,
     rpc_url: Option<String>,
+    router_address: Option<String>,
 }
 
 #[derive(Debug, Serialize, Deserialize)]
@@ -186,6 +209,23 @@ impl Db {
         self.state.current_user_address.as_deref()
     }
 
+    fn context(&self) -> Option<nak3d_cli::Context> {
+        Some(nak3d_cli::Context {
+            rpc_url: self.rpc_url()?.to_string(),
+            router_address: self.router_address()?.parse().ok()?,
+        })
+    }
+
+    fn user_info(&self) -> Option<nak3d_cli::UserInfo> {
+        let address = self.current_user_address()?;
+        let user = self.load_user(address).ok()?;
+
+        Some(nak3d_cli::UserInfo {
+            address: user.eth_address.parse().ok()?,
+            sk: user.private_key.parse().ok()?,
+        })
+    }
+
     fn current_user_name(&self) -> Option<String> {
         self.current_user_address()
             .and_then(|address| self.load_user(address).ok())
@@ -200,8 +240,18 @@ impl Db {
         self.state.rpc_url.as_deref()
     }
 
+    fn router_address(&self) -> Option<&str> {
+        self.state.router_address.as_deref()
+    }
+
     fn set_current_user(&mut self, address: String) -> Result<()> {
         self.state.current_user_address = Some(address);
+        self.save_state()
+    }
+
+    fn set_router_address(&mut self, address: String) -> Result<()> {
+        // Just save the router address in state; no on-chain check is performed.
+        self.state.router_address = Some(address);
         self.save_state()
     }
 
@@ -277,8 +327,29 @@ impl Db {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     let mut db = Db::load()?;
+    env_logger::init_from_env(env_logger::Env::new().default_filter_or("info"));
 
     match cli.command {
+        Command::UploadCode(args) => {
+            let db = Db::load()?;
+            let context = db
+                .context()
+                .ok_or_else(|| anyhow!("missing context (rpc url or router address)"))?;
+            let user_info = db
+                .user_info()
+                .ok_or_else(|| anyhow!("no current user with private key; run `login` first"))?;
+            nak3d_cli::deploy::upload_code(context, user_info, args.wasm_path).await
+        }
+        Command::CreateNewContract(args) => {
+            let db = Db::load()?;
+            let context = db
+                .context()
+                .ok_or_else(|| anyhow!("missing context (rpc url or router address)"))?;
+            let user_info = db
+                .user_info()
+                .ok_or_else(|| anyhow!("no current user with private key; run `login` first"))?;
+            nak3d_cli::deploy::create_program(context, user_info, args.code_id.parse()?, None).await
+        }
         Command::Login(args) => handle_login(&mut db, args),
         Command::Set(args) => handle_set(&mut db, args).await,
         Command::ShowState => handle_show_state(&db),
@@ -370,14 +441,28 @@ fn handle_login(db: &mut Db, args: LoginArgs) -> Result<()> {
 
 async fn handle_set(db: &mut Db, args: SetArgs) -> Result<()> {
     match args.command {
-        SetCommand::ContractAddress { address: address_string } => {
+        SetCommand::RouterAddress { address } => {
+            // Just validate the address format and save it; no on-chain check is performed.
+            let _ =
+                normalize_eth_address(&address).with_context(|| "invalid router address format")?;
+            db.set_router_address(address.clone())?;
+            println!("Router address saved: {address}");
+            println!("DB root: {}", db.root_dir().display());
+            Ok(())
+        }
+        SetCommand::ContractAddress {
+            address: address_string,
+        } => {
             let address = gsigner::Address::from_str(&address_string).unwrap();
 
             if let Some(rpc) = db.rpc_url() {
                 println!("Check if contract exists at {address} using RPC {rpc}...");
                 let provider = RootProvider::connect(rpc).await.unwrap();
                 let mirror = ethexe_ethereum::mirror::MirrorQuery::new(provider, address);
-                let state_hash = mirror.state_hash().await.expect("Looks like is not a correct mirror address");
+                let state_hash = mirror
+                    .state_hash()
+                    .await
+                    .expect("Looks like is not a correct mirror address");
                 println!("Contract state hash: {state_hash:#x}");
             }
 

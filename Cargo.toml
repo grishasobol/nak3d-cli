@@ -3,6 +3,10 @@ name = "nak3d-cli"
 version = "0.1.0"
 edition = "2024"
 
+[[bin]]
+name = "nak3d-cli"
+path = "src/bin/main.rs"
+
 [dependencies]
 anyhow = { version = "1.0.86" }
 clap = { version = "4.5.8", features = ["derive"] }
@@ -13,6 +17,17 @@ serde_json = { version = "1.0.135", default-features = false, features = [
 ] }
 alloy = "1.4"
 tokio = { version = "1.38.0", features = ["rt-multi-thread"] }
+log = { version = "0.4.22" }
+env_logger = "0.11.8"
 
-ethexe-ethereum = { git = "https://github.com/gear-tech/gear", package = "ethexe-ethereum" }
-gsigner = { git = "https://github.com/gear-tech/gear", package = "gsigner" }
+# ethexe-ethereum = { path = "/Users/gsobol/src/gear/ethexe/ethereum" }
+# gsigner = { path = "/Users/gsobol/src/gear/gsigner", features = ["secp256k1", "std"] }
+# gprimitives = { path = "/Users/gsobol/src/gear/gprimitives", features = ["std"] }
+# gear-core = { path = "/Users/gsobol/src/gear/core", features = ["std"] }
+# onlyhack-client = { path = "/Users/gsobol/src/onlyhackaton/client", package = "onlyhack-client" }
+
+ethexe-ethereum = { git = "https://github.com/gear-tech/gear", package = "ethexe-ethereum"}
+gsigner = { git = "https://github.com/gear-tech/gear", package = "gsigner", features = ["secp256k1", "std"] }
+gprimitives = { git = "https://github.com/gear-tech/gear", package = "gprimitives", features = ["std"] }
+gear-core = { git = "https://github.com/gear-tech/gear", package = "gear-core", features = ["std"] }
+onlyhack-client = { git = "https://github.com/vobradovich/onlyhackaton", package = "onlyhack-client" }
